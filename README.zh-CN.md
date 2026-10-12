@@ -14,6 +14,39 @@
 2. 复制提问，在 ChatGPT 新开对话（关闭联网/搜索）发送
 3. 粘贴回复，点 Analyze（Load sample → Analyze 可看演示）
 
+## 使用 Codex 自动运行
+
+仓库提供了一个不依赖第三方 Node 包的 Runner，可以调用本机已经登录的
+Codex CLI，自动回答当前 `questions.json` 中的题目，并生成可直接粘贴回本页
+回复框的 JSON。因此个人本机运行不需要 OpenAI API Key。
+
+需要 Node.js 18 或更高版本，以及已经可以运行的 Codex CLI。先检查登录状态：
+
+```bash
+codex login status
+```
+
+运行完整题库并保存结果：
+
+```bash
+node scripts/run-codex-eval.mjs \
+  --output /tmp/wimgpt-codex-answer.json \
+  --events /tmp/wimgpt-codex-events.jsonl
+```
+
+标准输出也会打印规范化后的答案。可以用 `--model MODEL` 指定 Codex 模型，
+用 `--dry-run` 查看实际发送的提问，用 `--limit 8` 做小规模 smoke test。
+`--limit` 只会运行部分题目，结果不适合直接拿到完整题库的网页中分析。
+
+个人定时运行时，可以由 cron 或 systemd timer 调用这个命令。Runner 应该运行
+在已经登录 Codex 的宿主机上；不要把 Codex 登录目录挂载到公开 Web 容器，也不要
+让 HTTP 请求直接传入任意 shell 命令。Runner 对每次运行使用只读沙箱、独立的
+ephemeral 对话、JSON Schema 和超时控制。
+
+这个 Runner 测量的是 Codex Harness 下模型的回答，不能证明 ChatGPT 网页端另一
+个对话实际选择了哪个模型。定时结果应同时保存请求模型、题库版本、原始回答和
+运行时间，以便截止日更新后复查历史结果。
+
 ## 原理
 
 ### 形式化

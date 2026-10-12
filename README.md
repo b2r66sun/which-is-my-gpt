@@ -15,6 +15,44 @@ over candidate models.
 2. Copy the quiz, send it in a fresh ChatGPT chat with search disabled.
 3. Paste the reply, hit Analyze. (Load sample → Analyze for a demo.)
 
+## Automated runs with Codex
+
+The repository includes an optional dependency-free Node.js runner for a local
+Codex CLI. It uses the Codex login already configured on the machine, so it does
+not require an OpenAI API key. The runner writes the same JSON shape accepted by
+the reply box in this page.
+
+Requirements: Node.js 18 or later and a working Codex CLI. Check the login
+before scheduling a run:
+
+```bash
+codex login status
+```
+
+Run the complete question bank and save the answer for pasting into the UI:
+
+```bash
+node scripts/run-codex-eval.mjs \
+  --output /tmp/wimgpt-codex-answer.json \
+  --events /tmp/wimgpt-codex-events.jsonl
+```
+
+The normalized answer is also printed to stdout. Use `--model MODEL` to select a
+Codex model, `--dry-run` to inspect the generated prompt, and `--limit 8` for a
+small smoke test. `--limit` intentionally produces a partial question set and
+is not suitable for a full run in the browser.
+
+For a private scheduled run, call the command from cron or a systemd timer. Keep
+the runner on the host where Codex is logged in; do not mount the Codex auth
+directory into a public browser container or accept arbitrary shell commands
+from HTTP requests. The runner uses a read-only sandbox, a fresh ephemeral
+conversation, a JSON Schema, and a timeout for each run.
+
+This measures the model through the Codex harness. It does not prove which model
+the ChatGPT web app selected for a separate conversation. Store the requested
+model, question-bank version, raw answer, and run timestamp with scheduled
+results so later cutoff updates remain auditable.
+
 ## How it works
 
 ### Setup
