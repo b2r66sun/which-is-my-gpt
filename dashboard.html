@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wimgpt automated evaluations</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">WIMGPT / AUTOMATED EVALUATIONS</p>
+        <h1>Codex evaluation console</h1>
+        <p class="muted">Run the cutoff detector on a local Codex login, inspect posterior drift, and keep scheduled history.</p>
+      </div>
+      <nav><a href="index.html">Manual analyzer</a></nav>
+    </header>
+
+    <section class="grid two">
+      <article class="card">
+        <h2>Run now</h2>
+        <p class="muted">Select one or more Codex model IDs. Each selected model gets its own queued run; leave all unselected to use Codex's default.</p>
+        <label>Models <select id="run-models" multiple size="6" aria-label="Models for immediate run"></select></label>
+        <button id="run-now">Start run</button>
+      </article>
+      <article class="card">
+        <h2>Question bank</h2>
+        <div id="config" class="stats">Loading…</div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-head"><div><h2>Schedules</h2><p class="muted">Five-field local cron, checked every 15 seconds.</p></div></div>
+      <form id="schedule-form" class="schedule-form">
+        <input id="schedule-edit-id" type="hidden">
+        <label>Name <input id="schedule-name" required value="Nightly cutoff check"></label>
+        <label>Cron <input id="schedule-cron" required value="0 3 * * *" pattern="[0-9*,/\\-]+( [0-9*,/\\-]+){4}"></label>
+        <label>Models <select id="schedule-models" multiple size="6" aria-label="Models for schedule"></select></label>
+        <div class="form-actions"><button id="schedule-submit" type="submit">Create schedule</button><button id="schedule-cancel-edit" class="ghost" type="button" hidden>Cancel edit</button></div>
+      </form>
+      <div id="schedules" class="table-wrap"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head"><div><h2>Runs</h2><p class="muted">The worker keeps one Codex run active at a time.</p></div><button class="ghost" id="refresh">Refresh</button></div>
+      <div id="runs" class="table-wrap"></div>
+      <h3>Posterior trend</h3>
+      <div id="trend" class="trend"></div>
+    </section>
+
+    <section class="card" id="run-detail" hidden>
+      <div class="section-head"><div><h2>Run detail</h2><p id="detail-meta" class="muted"></p></div><button class="ghost" id="close-detail">Close</button></div>
+      <div id="detail-summary"></div>
+      <div id="detail-models" class="table-wrap"></div>
+      <details><summary>Normalized answer</summary><pre id="detail-answer"></pre></details>
+      <details><summary>Failure</summary><pre id="detail-error"></pre></details>
+      <button class="ghost" id="download-detail">Download run JSON</button>
+    </section>
+  </main>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

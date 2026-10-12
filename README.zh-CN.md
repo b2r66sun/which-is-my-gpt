@@ -14,6 +14,90 @@
 2. 复制提问，在 ChatGPT 新开对话（关闭联网/搜索）发送
 3. 粘贴回复，点 Analyze（Load sample → Analyze 可看演示）
 
+## 使用 Codex 自动运行
+
+仓库提供了一个不依赖第三方 Node 包的 Runner，可以调用本机已经登录的
+Codex CLI，自动回答当前 `questions.json` 中的题目，并生成可直接粘贴回本页
+回复框的 JSON。因此个人本机运行不需要 OpenAI API Key。
+
+需要 Node.js 18 或更高版本，以及已经可以运行的 Codex CLI。先检查登录状态：
+
+```bash
+codex login status
+```
+
+运行完整题库并保存结果：
+
+```bash
+node scripts/run-codex-eval.mjs \
+  --output /tmp/wimgpt-codex-answer.json \
+  --events /tmp/wimgpt-codex-events.jsonl
+```
+
+启动本地完整控制台：
+
+```bash
+node server.mjs
+```
+
+项目不需要安装 Node 依赖；贡献前的语法和原有推断自测可以直接运行：
+
+```bash
+npm test
+```
+
+### 使用 PM2 持久化部署
+
+PM2 必须使用完成 `codex login` 的同一个用户运行。不要用 `sudo` 启动这个服务，
+否则 worker 可能读不到该用户的 Codex 登录凭据。
+
+首次安装并启动：
+
+```bash
+npm install --global pm2
+npm run pm2:start
+curl http://127.0.0.1:8787/api/health
+```
+
+设置系统重启后的自动恢复：
+
+```bash
+npm run pm2:startup
+pm2 save
+```
+
+`pm2 startup` 会打印一条需要按当前系统执行的命令；执行后再运行 `pm2 save`
+保存当前进程列表。日常可以使用 `npm run pm2:restart`、`npm run pm2:stop`、
+`npm run pm2:remove` 和 `pm2 logs wimgpt-dashboard`。
+
+PM2 配置固定监听 loopback，状态和日志放在 `.wimgpt/`，服务崩溃会自动重启，
+并关闭文件监听，避免运行结果写入时触发重启循环。
+
+然后打开 `http://127.0.0.1:8787/`。控制台支持立即运行、创建/暂停/恢复/删除
+计划、取消任务、查看运行详情、后验结果和历史记录。状态、计划、答案和评分摘要
+保存在 `.wimgpt/`；服务默认只监听 loopback。计划使用本地五字段 cron，例如
+`0 3 * * *`，调度器每 15 秒检查一次，并且同时只运行一个 Codex 任务。
+计划和立即运行都可以选择多个模型；每个模型会生成一个独立的队列任务，并通过
+同一个 batch ID 关联。一个模型都不选时使用 Codex 默认模型。
+
+HTTP API 同时接受旧的 `model` 字符串和新的 `models` 数组。`GET /api/config`
+返回题库候选模型，`GET /api/codex-models` 查询本机 Codex app server 当前可用的
+模型。企业微信通知默认关闭；确有需要时，仅从可信的回环客户端调用
+`PATCH /api/wecom` 写入 webhook 地址。
+
+标准输出也会打印规范化后的答案。可以用 `--model MODEL` 指定 Codex 模型，
+用 `--dry-run` 查看实际发送的提问，用 `--limit 8` 做小规模 smoke test。
+`--limit` 只会运行部分题目，结果不适合直接拿到完整题库的网页中分析。
+
+个人定时运行时，可以由 cron 或 systemd timer 调用这个命令。Runner 应该运行
+在已经登录 Codex 的宿主机上；不要把 Codex 登录目录挂载到公开 Web 容器，也不要
+让 HTTP 请求直接传入任意 shell 命令。Runner 对每次运行使用只读沙箱、独立的
+ephemeral 对话、JSON Schema 和超时控制。
+
+这个 Runner 测量的是 Codex Harness 下模型的回答，不能证明 ChatGPT 网页端另一
+个对话实际选择了哪个模型。定时结果应同时保存请求模型、题库版本、原始回答和
+运行时间，以便截止日更新后复查历史结果。
+
 ## 原理
 
 ### 形式化

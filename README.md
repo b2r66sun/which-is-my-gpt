@@ -15,6 +15,98 @@ over candidate models.
 2. Copy the quiz, send it in a fresh ChatGPT chat with search disabled.
 3. Paste the reply, hit Analyze. (Load sample → Analyze for a demo.)
 
+## Automated runs with Codex
+
+The repository includes an optional dependency-free Node.js runner for a local
+Codex CLI. It uses the Codex login already configured on the machine, so it does
+not require an OpenAI API key. The runner writes the same JSON shape accepted by
+the reply box in this page.
+
+Requirements: Node.js 18 or later and a working Codex CLI. Check the login
+before scheduling a run:
+
+```bash
+codex login status
+```
+
+Run the complete question bank and save the answer for pasting into the UI:
+
+```bash
+node scripts/run-codex-eval.mjs \
+  --output /tmp/wimgpt-codex-answer.json \
+  --events /tmp/wimgpt-codex-events.jsonl
+```
+
+For the local dashboard, start the built-in server and open
+`http://127.0.0.1:8787/`:
+
+```bash
+node server.mjs
+```
+
+The same checks used before a contribution can be run without installing any
+packages:
+
+```bash
+npm test
+```
+
+### Run as a persistent PM2 service
+
+PM2 must run as the same user that completed `codex login`; do not start this
+process with `sudo`, because the worker needs that user's Codex authentication.
+Install PM2 once, then start and save the dashboard process:
+
+```bash
+npm install --global pm2
+npm run pm2:start
+curl http://127.0.0.1:8787/api/health
+```
+
+Enable restart after reboot by running the printed command from `pm2 startup`
+once, then save the current process list:
+
+```bash
+npm run pm2:startup
+pm2 save
+```
+
+Useful lifecycle commands are `npm run pm2:restart`, `npm run pm2:stop`,
+`npm run pm2:remove`, and `pm2 logs wimgpt-dashboard`. The PM2 ecosystem file
+keeps the service on loopback, stores application state and PM2 logs under
+`.wimgpt/`, restarts after crashes, and avoids file watching so a generated run
+cannot trigger a restart loop.
+
+The dashboard stores schedules, runs, normalized answers, and score summaries
+under `.wimgpt/`. The server binds to loopback by default. Use a five-field local
+cron expression such as `0 3 * * *`; the scheduler checks it every 15 seconds and
+keeps one Codex run active at a time. A schedule can select multiple model IDs;
+the server creates one queued run per selected model and links them with a shared
+batch ID. Leaving the selection empty uses Codex's default model.
+
+The HTTP API accepts the legacy `model` string and the multi-model `models` array
+on run and schedule requests. `GET /api/config` returns the question-bank model
+catalog, while `GET /api/codex-models` asks the local Codex app server for its
+currently available models. Enterprise WeChat notifications are disabled by
+default; configure them through the local `PATCH /api/wecom` endpoint only when
+you have a trusted loopback client and a webhook URL.
+
+The normalized answer is also printed to stdout. Use `--model MODEL` to select a
+Codex model, `--dry-run` to inspect the generated prompt, and `--limit 8` for a
+small smoke test. `--limit` intentionally produces a partial question set and
+is not suitable for a full run in the browser.
+
+For a private scheduled run, call the command from cron or a systemd timer. Keep
+the runner on the host where Codex is logged in; do not mount the Codex auth
+directory into a public browser container or accept arbitrary shell commands
+from HTTP requests. The runner uses a read-only sandbox, a fresh ephemeral
+conversation, a JSON Schema, and a timeout for each run.
+
+This measures the model through the Codex harness. It does not prove which model
+the ChatGPT web app selected for a separate conversation. Store the requested
+model, question-bank version, raw answer, and run timestamp with scheduled
+results so later cutoff updates remain auditable.
+
 ## How it works
 
 ### Setup
