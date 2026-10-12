@@ -20,8 +20,8 @@
     <section class="grid two">
       <article class="card">
         <h2>Run now</h2>
-        <p class="muted">A run uses the current question bank and starts one isolated Codex job.</p>
-        <label>Model override <input id="run-model" placeholder="Use Codex default"></label>
+        <p class="muted">Select one or more Codex model IDs. Each selected model gets its own queued run; leave all unselected to use Codex's default.</p>
+        <label>Models <select id="run-models" multiple size="6" aria-label="Models for immediate run"></select></label>
         <button id="run-now">Start run</button>
       </article>
       <article class="card">
@@ -36,7 +36,7 @@
         <input id="schedule-edit-id" type="hidden">
         <label>Name <input id="schedule-name" required value="Nightly cutoff check"></label>
         <label>Cron <input id="schedule-cron" required value="0 3 * * *" pattern="[0-9*,/\\-]+( [0-9*,/\\-]+){4}"></label>
-        <label>Model <input id="schedule-model" placeholder="Use Codex default"></label>
+        <label>Models <select id="schedule-models" multiple size="6" aria-label="Models for schedule"></select></label>
         <div class="form-actions"><button id="schedule-submit" type="submit">Create schedule</button><button id="schedule-cancel-edit" class="ghost" type="button" hidden>Cancel edit</button></div>
       </form>
       <div id="schedules" class="table-wrap"></div>

@@ -12,7 +12,8 @@ a { color:var(--blue); }
 .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; margin:16px 0; box-shadow:0 2px 10px #0f172a0a; }
 h2 { margin:0 0 7px; font-size:1.1rem; }
 label { display:flex; flex-direction:column; gap:5px; color:var(--muted); font-size:.85rem; }
-input { width:100%; border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin:2px 0 11px; font:inherit; color:var(--fg); background:#fff; }
+input,select { width:100%; border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin:2px 0 11px; font:inherit; color:var(--fg); background:#fff; }
+select[multiple] { min-height:142px; padding:5px; }
 button { border:0; border-radius:8px; padding:9px 14px; background:var(--blue); color:#fff; cursor:pointer; font:inherit; }
 button:hover { filter:brightness(1.08); }
 button.ghost { color:var(--fg); background:#e9eef5; }

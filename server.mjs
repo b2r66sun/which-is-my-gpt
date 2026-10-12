@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -17,6 +17,7 @@ const DEFAULT_PORT = 8787;
 const DEFAULT_STATE_DIR = join(ROOT, ".wimgpt");
 const MAX_RUNS = 200;
 const TICK_MS = 15_000;
+const MODEL_CACHE_MS = 5 * 60_000;
 
 const options = parseArgs(process.argv.slice(2));
 const stateDir = resolve(options.stateDir);
@@ -32,6 +33,7 @@ let questionBank = loadQuestionBank();
 let state = loadState();
 const active = new Map();
 const queue = [];
+let modelCache = { fetchedAt: null, models: [], error: null };
 
 for (const run of state.runs) {
   if (run.status === "running") {
@@ -114,22 +116,44 @@ function loadQuestionBank() {
 }
 
 function loadState() {
-  if (!existsSync(statePath)) return { schedules: [], runs: [] };
+  if (!existsSync(statePath)) return { schedules: [], runs: [], wecom: defaultWecomConfig() };
   try {
     const loaded = JSON.parse(readFileSync(statePath, "utf8"));
     return {
-      schedules: Array.isArray(loaded.schedules) ? loaded.schedules : [],
-      runs: Array.isArray(loaded.runs) ? loaded.runs : [],
+      schedules: (Array.isArray(loaded.schedules) ? loaded.schedules : []).map((schedule) => ({
+        ...schedule,
+        models: Array.isArray(schedule.models)
+          ? schedule.models
+          : (schedule.model ? [schedule.model] : []),
+      })),
+      runs: (Array.isArray(loaded.runs) ? loaded.runs : []).map((run) => ({
+        ...run,
+        models: Array.isArray(run.models) ? run.models : (run.model ? [run.model] : []),
+      })),
+      wecom: { ...defaultWecomConfig(), ...(loaded.wecom || {}) },
     };
   } catch (error) {
     throw new Error(`Cannot read ${statePath}: ${error.message}`);
   }
 }
 
+function defaultWecomConfig() {
+  return {
+    enabled: false,
+    webhookUrl: "",
+    events: { completed: true, failed: true, cancelled: true },
+    mentionAll: false,
+    updatedAt: null,
+    lastSentAt: null,
+    lastError: null,
+  };
+}
+
 function saveState() {
   mkdirSync(stateDir, { recursive: true });
   const tmp = `${statePath}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  chmodSync(tmp, 0o600);
   renameSync(tmp, statePath);
 }
 
@@ -214,6 +238,154 @@ function cronMatches(date, expression) {
     && calendarDayMatches;
 }
 
+function normalizeCodexModels(data) {
+  return (Array.isArray(data) ? data : []).map((model) => ({
+    id: model.id || model.model,
+    model: model.model || model.id,
+    displayName: model.displayName || model.id || model.model,
+    description: model.description || "",
+    hidden: Boolean(model.hidden),
+    isDefault: Boolean(model.isDefault),
+    supportedReasoningEfforts: model.supportedReasoningEfforts || [],
+    defaultReasoningEffort: model.defaultReasoningEffort || null,
+  })).filter((model) => model.id);
+}
+
+function fetchCodexModels(force = false) {
+  if (!force && modelCache.fetchedAt && Date.now() - modelCache.fetchedAt < MODEL_CACHE_MS) {
+    return Promise.resolve(modelCache);
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(options.codexBin, ["app-server", "--listen", "stdio://"], {
+      cwd: ROOT,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let buffer = "";
+    let settled = false;
+    let stderr = "";
+    const timer = setTimeout(() => finish(new Error("Codex model discovery timed out")), 15_000);
+    const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const finish = (error, models = []) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill("SIGTERM");
+      if (error) {
+        modelCache = { fetchedAt: Date.now(), models: [], error: error.message };
+        reject(error);
+      } else {
+        modelCache = { fetchedAt: Date.now(), models, error: null };
+        resolve(modelCache);
+      }
+    };
+    const handle = (message) => {
+      if (message.id === 1 && message.error) {
+        finish(new Error(message.error.message || "Codex initialization failed"));
+      } else if (message.id === 1) {
+        send({ method: "initialized", params: {} });
+        send({ id: 2, method: "model/list", params: { cursor: null, includeHidden: false, limit: 100 } });
+      } else if (message.id === 2) {
+        finish(null, normalizeCodexModels(message.result?.data));
+      }
+    };
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try { handle(JSON.parse(line)); } catch { /* Ignore non-JSON diagnostics. */ }
+      }
+    });
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-4_000); });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      if (!settled) finish(new Error(stderr.trim() || `Codex app-server exited with status ${code}`));
+    });
+    send({
+      id: 1,
+      method: "initialize",
+      params: {
+        clientInfo: { name: "wimgpt-dashboard", title: "wimgpt dashboard", version: "0.1.0" },
+        capabilities: {},
+      },
+    });
+  });
+}
+
+function publicWecomConfig() {
+  const config = state.wecom || defaultWecomConfig();
+  const masked = config.webhookUrl
+    ? config.webhookUrl.replace(/(key=)[^&]+/i, "$1***")
+    : "";
+  return {
+    enabled: Boolean(config.enabled),
+    configured: Boolean(config.webhookUrl),
+    webhookUrlMasked: masked,
+    events: config.events,
+    mentionAll: Boolean(config.mentionAll),
+    updatedAt: config.updatedAt || null,
+    lastSentAt: config.lastSentAt || null,
+    lastError: config.lastError || null,
+  };
+}
+
+function validateWebhookUrl(value) {
+  const parsed = new URL(value);
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error("WeCom callback URL must use http or https");
+  return parsed.toString();
+}
+
+async function postWecom(content, mentionAll = false) {
+  const config = state.wecom || defaultWecomConfig();
+  if (!config.webhookUrl) throw new Error("WeCom callback URL is not configured");
+  const response = await fetch(config.webhookUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      msgtype: "markdown",
+      markdown: { content, mentioned_list: mentionAll ? ["@all"] : [] },
+    }),
+  });
+  const body = await response.text();
+  let parsed = null;
+  try { parsed = JSON.parse(body); } catch { /* keep text for diagnostics */ }
+  if (!response.ok) throw new Error(`WeCom HTTP ${response.status}: ${body.slice(0, 500)}`);
+  if (parsed && parsed.errcode && parsed.errcode !== 0) {
+    throw new Error(`WeCom ${parsed.errcode}: ${parsed.errmsg || body.slice(0, 500)}`);
+  }
+  return parsed || body;
+}
+
+async function notifyWecom(run) {
+  const config = state.wecom || defaultWecomConfig();
+  if (!config.enabled || !config.webhookUrl || !config.events?.[run.status]) return;
+  const result = run.result;
+  const lines = [
+    `### wimgpt Codex 测试${run.status === "completed" ? "完成" : run.status === "failed" ? "失败" : "已取消"}`,
+    `- 运行：${run.id.slice(0, 8)}`,
+    `- 模型：${run.model || "Codex 默认模型"}`,
+    `- 状态：${run.status}`,
+  ];
+  if (result) {
+    lines.push(`- MAP：${result.map.id} (${(result.map.probability * 100).toFixed(1)}%)`);
+    lines.push(`- Entropy：${result.entropy.toFixed(3)}`);
+    lines.push(`- Canary：${result.canaryHits}/${result.canaryTotal}`);
+    lines.push(`- 未回答：${result.unanswered}`);
+  }
+  if (run.error) lines.push(`- 错误：${run.error.slice(0, 800)}`);
+  try {
+    await postWecom(lines.join("\n"), config.mentionAll);
+    config.lastSentAt = nowIso();
+    config.lastError = null;
+  } catch (error) {
+    config.lastError = error.message;
+  }
+  state.wecom = config;
+  saveState();
+}
+
 function validateCron(expression) {
   const fields = String(expression || "").trim().split(/\s+/);
   if (fields.length !== 5) throw new Error("Cron must have five fields: minute hour day month weekday");
@@ -271,11 +443,24 @@ function scoreAnswer(answer) {
   };
 }
 
-function enqueueRun({ scheduleId = null, model = null } = {}) {
+function normalizeRequestedModels(value) {
+  if (value === undefined || value === null || value === "") return [];
+  const values = Array.isArray(value) ? value : [value];
+  if (!values.every((model) => typeof model === "string")) {
+    throw new Error("models must be an array of strings");
+  }
+  return [...new Set(values.map((model) => model.trim()).filter(Boolean))].slice(0, 32);
+}
+
+function enqueueRun({ scheduleId = null, model = null, models = [], start = true } = {}) {
+  const selectedModels = Array.isArray(models) ? models.filter(Boolean) : [];
+  const selectedModel = model || selectedModels[0] || null;
   const run = {
     id: randomUUID(),
     scheduleId,
-    model: model || null,
+    batchId: randomUUID(),
+    model: selectedModel,
+    models: selectedModels.length ? selectedModels : (selectedModel ? [selectedModel] : []),
     questionBankVersion: questionBank.version,
     status: "queued",
     phase: "queued",
@@ -292,8 +477,29 @@ function enqueueRun({ scheduleId = null, model = null } = {}) {
   state.runs = state.runs.slice(0, MAX_RUNS);
   queue.push(run.id);
   saveState();
-  pumpQueue();
+  if (start) pumpQueue();
   return run;
+}
+
+function enqueueRuns({ scheduleId = null, models = [] } = {}) {
+  const selectedModels = normalizeRequestedModels(models);
+  const batchId = randomUUID();
+  const runs = (selectedModels.length ? selectedModels : [null]).map((model) => {
+    const run = enqueueRun({ scheduleId, model, start: false });
+    run.batchId = batchId;
+    run.models = selectedModels;
+    return run;
+  });
+  saveState();
+  pumpQueue();
+  return runs;
+}
+
+function publicBatch(runs) {
+  return {
+    batchId: runs[0]?.batchId || null,
+    runs: runs.map(publicRun),
+  };
 }
 
 function runChild(run) {
@@ -358,6 +564,7 @@ function finishChild(run, code, stdout, stderr) {
   }
   run.finishedAt = nowIso();
   saveState();
+  void notifyWecom(run);
   pumpQueue();
 }
 
@@ -395,6 +602,7 @@ function cancelRun(id) {
     run.progress = 100;
     run.finishedAt = nowIso();
     saveState();
+    void notifyWecom(run);
     return run;
   }
   const child = active.get(id);
@@ -417,7 +625,7 @@ function tickSchedules() {
     if (state.runs.some((run) => run.scheduleId === schedule.id && ["queued", "running"].includes(run.status))) continue;
     schedule.lastTriggeredMinute = minuteKey;
     schedule.lastTriggeredAt = nowIso();
-    enqueueRun({ scheduleId: schedule.id, model: schedule.model });
+    enqueueRuns({ scheduleId: schedule.id, models: schedule.models || [] });
     changed = true;
   }
   if (changed) saveState();
@@ -463,6 +671,48 @@ async function handle(req, res) {
         port: options.port,
       });
     }
+    if (req.method === "GET" && url.pathname === "/api/codex-models") {
+      try {
+        return json(res, 200, await fetchCodexModels());
+      } catch (error) {
+        return json(res, 200, { fetchedAt: modelCache.fetchedAt, models: [], error: error.message });
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/api/wecom") {
+      return json(res, 200, publicWecomConfig());
+    }
+    if (req.method === "PATCH" && url.pathname === "/api/wecom") {
+      const body = await readBody(req);
+      const config = state.wecom || defaultWecomConfig();
+      if (body.webhookUrl !== undefined) {
+        config.webhookUrl = body.webhookUrl ? validateWebhookUrl(String(body.webhookUrl).trim()) : "";
+      }
+      if (body.enabled !== undefined) config.enabled = Boolean(body.enabled);
+      if (body.mentionAll !== undefined) config.mentionAll = Boolean(body.mentionAll);
+      if (body.events !== undefined) {
+        if (!body.events || typeof body.events !== "object" || Array.isArray(body.events)) {
+          throw new Error("events must be an object");
+        }
+        config.events = {
+          completed: body.events.completed !== false,
+          failed: body.events.failed !== false,
+          cancelled: body.events.cancelled !== false,
+        };
+      }
+      config.updatedAt = nowIso();
+      state.wecom = config;
+      saveState();
+      return json(res, 200, publicWecomConfig());
+    }
+    if (req.method === "POST" && url.pathname === "/api/wecom/test") {
+      await postWecom("### wimgpt 通知测试\n- 状态：连接成功", false);
+      const config = state.wecom || defaultWecomConfig();
+      config.lastSentAt = nowIso();
+      config.lastError = null;
+      state.wecom = config;
+      saveState();
+      return json(res, 200, publicWecomConfig());
+    }
     if (req.method === "GET" && url.pathname === "/api/schedules") {
       return json(res, 200, state.schedules);
     }
@@ -476,6 +726,9 @@ async function handle(req, res) {
     }
     if (req.method === "POST" && url.pathname === "/api/runs") {
       const body = await readBody(req);
+      if (Object.prototype.hasOwnProperty.call(body, "models")) {
+        return json(res, 201, publicBatch(enqueueRuns({ models: body.models })));
+      }
       return json(res, 201, publicRun(enqueueRun({ model: body.model || null })));
     }
     if (req.method === "POST" && /^\/api\/runs\/[^/]+\/cancel$/.test(url.pathname)) {
@@ -484,11 +737,15 @@ async function handle(req, res) {
     }
     if (req.method === "POST" && url.pathname === "/api/schedules") {
       const body = await readBody(req);
+      const models = Object.prototype.hasOwnProperty.call(body, "models")
+        ? normalizeRequestedModels(body.models)
+        : normalizeRequestedModels(body.model);
       const schedule = {
         id: randomUUID(),
         name: String(body.name || "Codex evaluation").trim().slice(0, 120),
         cron: validateCron(body.cron || "0 * * * *"),
-        model: body.model ? String(body.model).trim().slice(0, 120) : null,
+        model: models[0] || null,
+        models,
         enabled: body.enabled !== false,
         createdAt: nowIso(),
         lastTriggeredMinute: null,
@@ -505,7 +762,13 @@ async function handle(req, res) {
       const body = await readBody(req);
       if (body.name !== undefined) schedule.name = String(body.name).trim().slice(0, 120);
       if (body.cron !== undefined) schedule.cron = validateCron(body.cron);
-      if (body.model !== undefined) schedule.model = body.model ? String(body.model).trim().slice(0, 120) : null;
+      if (Object.prototype.hasOwnProperty.call(body, "models")) {
+        schedule.models = normalizeRequestedModels(body.models);
+        schedule.model = schedule.models[0] || null;
+      } else if (body.model !== undefined) {
+        schedule.models = normalizeRequestedModels(body.model);
+        schedule.model = schedule.models[0] || null;
+      }
       if (body.enabled !== undefined) schedule.enabled = Boolean(body.enabled);
       saveState();
       return json(res, 200, schedule);
@@ -522,7 +785,8 @@ async function handle(req, res) {
       const id = url.pathname.split("/")[3];
       const schedule = findSchedule(id);
       if (!schedule) return json(res, 404, { error: "Schedule not found" });
-      return json(res, 201, publicRun(enqueueRun({ scheduleId: id, model: schedule.model })));
+      const runs = enqueueRuns({ scheduleId: id, models: schedule.models || schedule.model || [] });
+      return json(res, 201, runs.length === 1 ? publicRun(runs[0]) : publicBatch(runs));
     }
     return json(res, 404, { error: "API route not found" });
   } catch (error) {

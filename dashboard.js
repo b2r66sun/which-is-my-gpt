@@ -16,13 +16,38 @@ function statusClass(status) {
   return `status ${String(status || "").toLowerCase()}`;
 }
 
-function renderConfig(config) {
+function selectedModels(id) {
+  return [...$(id).selectedOptions].map((option) => option.value);
+}
+
+function setSelectedModels(id, models) {
+  const selected = new Set(Array.isArray(models) ? models : []);
+  [...$(id).options].forEach((option) => { option.selected = selected.has(option.value); });
+}
+
+function renderModelOptions(models) {
+  const available = Array.isArray(models) ? models : [];
+  const runSelected = $("run-models") ? selectedModels("run-models") : [];
+  const scheduleSelected = $("schedule-models") ? selectedModels("schedule-models") : [];
+  const options = available.map((model) => {
+    const label = model.displayName || model.id;
+    const cutoff = model.cutoff ? ` · cutoff ${model.cutoff}` : "";
+    return `<option value="${escapeText(model.id)}">${escapeText(label)}${escapeText(cutoff)}</option>`;
+  }).join("");
+  $("run-models").innerHTML = options;
+  $("schedule-models").innerHTML = options;
+  setSelectedModels("run-models", runSelected);
+  setSelectedModels("schedule-models", scheduleSelected);
+}
+
+function renderConfig(config, codexModels) {
   $("config").innerHTML = [
     [config.questionCount, "questions"],
     [config.canaryCount, "canaries"],
     [config.candidateCount, "candidates"],
     [config.questionBankVersion, "bank version"],
   ].map(([value, label]) => `<div class="stat"><b>${escapeText(value)}</b>${label}</div>`).join("");
+  renderModelOptions(codexModels?.length ? codexModels : config.models);
 }
 
 function renderSchedules(schedules) {
@@ -33,7 +58,7 @@ function renderSchedules(schedules) {
   const rows = schedules.map((schedule) => `<tr>
     <td>${escapeText(schedule.name)}</td>
     <td><code>${escapeText(schedule.cron)}</code></td>
-    <td>${escapeText(schedule.model || "Codex default")}</td>
+    <td>${escapeText((schedule.models || (schedule.model ? [schedule.model] : [])).join(", ") || "Codex default")}</td>
     <td><span class="${statusClass(schedule.enabled ? "enabled" : "paused")}">${schedule.enabled ? "enabled" : "paused"}</span></td>
     <td>${escapeText(schedule.lastTriggeredAt || "never")}</td>
     <td><div class="inline-actions">
@@ -88,10 +113,10 @@ function renderDetail(run) {
 
 async function refresh() {
   try {
-    const [config, schedules, runItems] = await Promise.all([
-      request("/api/config"), request("/api/schedules"), request("/api/runs?limit=100"),
+    const [config, codexModels, schedules, runItems] = await Promise.all([
+      request("/api/config"), request("/api/codex-models"), request("/api/schedules"), request("/api/runs?limit=100"),
     ]);
-    renderConfig(config);
+    renderConfig(config, codexModels.models);
     renderSchedules(schedules);
     renderRuns(runItems);
   } catch (error) {
@@ -101,7 +126,7 @@ async function refresh() {
 
 $("run-now").addEventListener("click", async () => {
   try {
-    await request("/api/runs", { method: "POST", body: JSON.stringify({ model: $("run-model").value.trim() || null }) });
+    await request("/api/runs", { method: "POST", body: JSON.stringify({ models: selectedModels("run-models") }) });
     await refresh();
   } catch (error) { alert(error.message); }
 });
@@ -113,7 +138,7 @@ $("schedule-form").addEventListener("submit", async (event) => {
     await request(editId ? `/api/schedules/${editId}` : "/api/schedules", { method: editId ? "PATCH" : "POST", body: JSON.stringify({
       name: $("schedule-name").value,
       cron: $("schedule-cron").value,
-      model: $("schedule-model").value.trim() || null,
+      models: selectedModels("schedule-models"),
     }) });
     clearScheduleEdit();
     await refresh();
@@ -137,7 +162,7 @@ function clearScheduleEdit() {
   $("schedule-edit-id").value = "";
   $("schedule-name").value = "Nightly cutoff check";
   $("schedule-cron").value = "0 3 * * *";
-  $("schedule-model").value = "";
+  setSelectedModels("schedule-models", []);
   $("schedule-submit").textContent = "Create schedule";
   $("schedule-cancel-edit").hidden = true;
 }
@@ -158,7 +183,7 @@ document.addEventListener("click", async (event) => {
       $("schedule-edit-id").value = schedule.id;
       $("schedule-name").value = schedule.name;
       $("schedule-cron").value = schedule.cron;
-      $("schedule-model").value = schedule.model || "";
+      setSelectedModels("schedule-models", schedule.models || (schedule.model ? [schedule.model] : []));
       $("schedule-submit").textContent = "Save schedule";
       $("schedule-cancel-edit").hidden = false;
       window.scrollTo({ top: 0, behavior: "smooth" });

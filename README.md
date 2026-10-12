@@ -80,7 +80,16 @@ cannot trigger a restart loop.
 The dashboard stores schedules, runs, normalized answers, and score summaries
 under `.wimgpt/`. The server binds to loopback by default. Use a five-field local
 cron expression such as `0 3 * * *`; the scheduler checks it every 15 seconds and
-keeps one Codex run active at a time.
+keeps one Codex run active at a time. A schedule can select multiple model IDs;
+the server creates one queued run per selected model and links them with a shared
+batch ID. Leaving the selection empty uses Codex's default model.
+
+The HTTP API accepts the legacy `model` string and the multi-model `models` array
+on run and schedule requests. `GET /api/config` returns the question-bank model
+catalog, while `GET /api/codex-models` asks the local Codex app server for its
+currently available models. Enterprise WeChat notifications are disabled by
+default; configure them through the local `PATCH /api/wecom` endpoint only when
+you have a trusted loopback client and a webhook URL.
 
 The normalized answer is also printed to stdout. Use `--model MODEL` to select a
 Codex model, `--dry-run` to inspect the generated prompt, and `--limit 8` for a

@@ -77,6 +77,13 @@ PM2 配置固定监听 loopback，状态和日志放在 `.wimgpt/`，服务崩�
 计划、取消任务、查看运行详情、后验结果和历史记录。状态、计划、答案和评分摘要
 保存在 `.wimgpt/`；服务默认只监听 loopback。计划使用本地五字段 cron，例如
 `0 3 * * *`，调度器每 15 秒检查一次，并且同时只运行一个 Codex 任务。
+计划和立即运行都可以选择多个模型；每个模型会生成一个独立的队列任务，并通过
+同一个 batch ID 关联。一个模型都不选时使用 Codex 默认模型。
+
+HTTP API 同时接受旧的 `model` 字符串和新的 `models` 数组。`GET /api/config`
+返回题库候选模型，`GET /api/codex-models` 查询本机 Codex app server 当前可用的
+模型。企业微信通知默认关闭；确有需要时，仅从可信的回环客户端调用
+`PATCH /api/wecom` 写入 webhook 地址。
 
 标准输出也会打印规范化后的答案。可以用 `--model MODEL` 指定 Codex 模型，
 用 `--dry-run` 查看实际发送的提问，用 `--limit 8` 做小规模 smoke test。
