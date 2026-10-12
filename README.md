@@ -51,6 +51,32 @@ packages:
 npm test
 ```
 
+### Run as a persistent PM2 service
+
+PM2 must run as the same user that completed `codex login`; do not start this
+process with `sudo`, because the worker needs that user's Codex authentication.
+Install PM2 once, then start and save the dashboard process:
+
+```bash
+npm install --global pm2
+npm run pm2:start
+curl http://127.0.0.1:8787/api/health
+```
+
+Enable restart after reboot by running the printed command from `pm2 startup`
+once, then save the current process list:
+
+```bash
+npm run pm2:startup
+pm2 save
+```
+
+Useful lifecycle commands are `npm run pm2:restart`, `npm run pm2:stop`,
+`npm run pm2:remove`, and `pm2 logs wimgpt-dashboard`. The PM2 ecosystem file
+keeps the service on loopback, stores application state and PM2 logs under
+`.wimgpt/`, restarts after crashes, and avoids file watching so a generated run
+cannot trigger a restart loop.
+
 The dashboard stores schedules, runs, normalized answers, and score summaries
 under `.wimgpt/`. The server binds to loopback by default. Use a five-field local
 cron expression such as `0 3 * * *`; the scheduler checks it every 15 seconds and
