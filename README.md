@@ -37,6 +37,25 @@ node scripts/run-codex-eval.mjs \
   --events /tmp/wimgpt-codex-events.jsonl
 ```
 
+For the local dashboard, start the built-in server and open
+`http://127.0.0.1:8787/`:
+
+```bash
+node server.mjs
+```
+
+The same checks used before a contribution can be run without installing any
+packages:
+
+```bash
+npm test
+```
+
+The dashboard stores schedules, runs, normalized answers, and score summaries
+under `.wimgpt/`. The server binds to loopback by default. Use a five-field local
+cron expression such as `0 3 * * *`; the scheduler checks it every 15 seconds and
+keeps one Codex run active at a time.
+
 The normalized answer is also printed to stdout. Use `--model MODEL` to select a
 Codex model, `--dry-run` to inspect the generated prompt, and `--limit 8` for a
 small smoke test. `--limit` intentionally produces a partial question set and

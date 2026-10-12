@@ -34,6 +34,23 @@ node scripts/run-codex-eval.mjs \
   --events /tmp/wimgpt-codex-events.jsonl
 ```
 
+启动本地完整控制台：
+
+```bash
+node server.mjs
+```
+
+项目不需要安装 Node 依赖；贡献前的语法和原有推断自测可以直接运行：
+
+```bash
+npm test
+```
+
+然后打开 `http://127.0.0.1:8787/`。控制台支持立即运行、创建/暂停/恢复/删除
+计划、取消任务、查看运行详情、后验结果和历史记录。状态、计划、答案和评分摘要
+保存在 `.wimgpt/`；服务默认只监听 loopback。计划使用本地五字段 cron，例如
+`0 3 * * *`，调度器每 15 秒检查一次，并且同时只运行一个 Codex 任务。
+
 标准输出也会打印规范化后的答案。可以用 `--model MODEL` 指定 Codex 模型，
 用 `--dry-run` 查看实际发送的提问，用 `--limit 8` 做小规模 smoke test。
 `--limit` 只会运行部分题目，结果不适合直接拿到完整题库的网页中分析。
