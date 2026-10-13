@@ -84,6 +84,65 @@ keeps one Codex run active at a time. A schedule can select multiple model IDs;
 the server creates one queued run per selected model and links them with a shared
 batch ID. Leaving the selection empty uses Codex's default model.
 
+Runs and schedules are paginated (10, 20, or 50 rows) and sorted by creation
+time, newest first. The dashboard polls only the current pages every three
+seconds while visible. Run lists contain summaries; answers and full posteriors
+are loaded when opening a detail. The trend has its own pages (10, 20, or 50 scored
+runs), ordered by completion time, newest first. Its page and size are independent
+of the run list. The existing 200-run
+retention limit is unchanged; pagination does not delete history.
+
+Timestamps use the browser's time zone and locale, identified at the top of the
+page. Hover over a timestamp to see its original UTC value. Storage and exports
+retain standard timestamps; cron schedules use the server's time zone.
+
+List API callers can request `GET /api/runs?page=1&pageSize=20` and
+`GET /api/schedules?page=1&pageSize=20`, or
+`GET /api/runs/trend?page=1&pageSize=20`. These return
+`{ items, page, pageSize, total, totalPages }`; page size must be 1–100, and pages
+past the end return the last page. Calls without pagination retain their array
+response, including full run data. `GET /api/runs/trend?limit=20` returns a
+bounded summary list for the trend.
+
+### Upstream update reminders and manual installation
+
+The dashboard can periodically check a public GitHub branch and display a new
+version notice. It never installs or restarts automatically. Configure this
+optional feature using its dedicated template:
+
+```bash
+cp config/updates/.env.example config/updates/.env
+```
+
+Fill the repository URL and the name of the PM2 process that owns this server.
+The template is the complete update configuration inventory and contains its
+non-secret defaults. Missing `.env` disables the feature; incomplete or invalid
+settings are reported on the page. The local `.env` is ignored by Git and is not
+served over HTTP. Restart the existing PM2 process to load configuration changes;
+use `pm2 restart <your-process-name>` to retain host-specific arguments rather
+than reapplying the repository ecosystem file. `--updates-config PATH` selects
+a different update configuration file, including for isolated tests.
+
+Use **Check for updates** for an immediate check, then **Update and restart**
+to install a compatible version. Checks only read remote references. Installation
+requires a clean checkout, no active evaluation, and ownership by the configured
+PM2 process with autorestart enabled. New queued runs wait during installation.
+The updater fetches the branch, verifies that the target includes the current
+commit and the dashboard/updater, and runs syntax checks and `npm test` in a
+temporary copy before a fast-forward merge. It then exits gracefully so PM2
+restarts it with the same arguments. It never calls `pm2:start` or rewrites the
+PM2 dump. The page reloads when the updated process is ready. No additional npm
+library or GitHub token is required.
+
+A fork with local features can diverge from the original repository's `main`.
+Those changes need merging before this updater can install them; it never
+discards local features or switches branches. Dependency/runtime changes also
+require a manual deployment. Before installation, the previous commit is saved
+under `refs/wimgpt-update-backups/`; `.wimgpt/update-receipt.json` records the
+successful update and backup reference. Candidate test failures leave the running
+checkout unchanged. A failed startup after installation requires manual recovery
+using the saved reference; automatic startup rollback is not implemented.
+
 The HTTP API accepts the legacy `model` string and the multi-model `models` array
 on run and schedule requests. `GET /api/config` returns the question-bank model
 catalog, while `GET /api/codex-models` asks the local Codex app server for its

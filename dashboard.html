@@ -13,9 +13,19 @@
         <p class="eyebrow">WIMGPT / AUTOMATED EVALUATIONS</p>
         <h1>Codex evaluation console</h1>
         <p class="muted">Run the cutoff detector on a local Codex login, inspect posterior drift, and keep scheduled history.</p>
+        <p id="time-zone" class="muted"></p>
       </div>
       <nav><a href="index.html">Manual analyzer</a></nav>
     </header>
+
+    <section class="card" aria-label="Software updates">
+      <div class="section-head">
+        <div><h2>Software updates</h2><p id="update-status" class="muted" aria-live="polite">Loading version information…</p></div>
+        <div class="inline-actions"><button id="update-check" class="ghost" disabled>Check for updates</button><button id="update-apply" disabled>Update and restart</button></div>
+      </div>
+      <p id="update-source" class="muted"></p>
+      <p id="update-error" class="status failed" role="alert" hidden></p>
+    </section>
 
     <section class="grid two">
       <article class="card">
@@ -31,7 +41,7 @@
     </section>
 
     <section class="card">
-      <div class="section-head"><div><h2>Schedules</h2><p class="muted">Five-field local cron, checked every 15 seconds.</p></div></div>
+      <div class="section-head"><div><h2>Schedules</h2><p class="muted">Newest created first. Five-field cron uses the server's time zone, checked every 15 seconds.</p></div></div>
       <form id="schedule-form" class="schedule-form">
         <input id="schedule-edit-id" type="hidden">
         <label>Name <input id="schedule-name" required value="Nightly cutoff check"></label>
@@ -40,13 +50,33 @@
         <div class="form-actions"><button id="schedule-submit" type="submit">Create schedule</button><button id="schedule-cancel-edit" class="ghost" type="button" hidden>Cancel edit</button></div>
       </form>
       <div id="schedules" class="table-wrap"></div>
+      <nav id="schedules-pagination" class="pagination" aria-label="Schedule pages">
+        <label>Per page <select id="schedules-page-size"><option>10</option><option selected>20</option><option>50</option></select></label>
+        <span id="schedules-page-info" class="muted" aria-live="polite"></span>
+        <button id="schedules-prev" class="ghost" disabled>Previous</button>
+        <button id="schedules-next" class="ghost" disabled>Next</button>
+      </nav>
     </section>
 
     <section class="card">
-      <div class="section-head"><div><h2>Runs</h2><p class="muted">The worker keeps one Codex run active at a time.</p></div><button class="ghost" id="refresh">Refresh</button></div>
+      <div class="section-head"><div><h2>Runs</h2><p class="muted">Newest created first. The worker keeps one Codex run active at a time.</p></div><button class="ghost" id="refresh">Refresh</button></div>
+      <p id="list-error" class="status failed" role="alert" hidden></p>
       <div id="runs" class="table-wrap"></div>
+      <nav id="runs-pagination" class="pagination" aria-label="Run pages">
+        <label>Per page <select id="runs-page-size"><option>10</option><option selected>20</option><option>50</option></select></label>
+        <span id="runs-page-info" class="muted" aria-live="polite"></span>
+        <button id="runs-prev" class="ghost" disabled>Previous</button>
+        <button id="runs-next" class="ghost" disabled>Next</button>
+      </nav>
       <h3>Posterior trend</h3>
+      <p class="muted">Scored runs, newest finished first, with pages independent of the run list.</p>
       <div id="trend" class="trend"></div>
+      <nav id="trend-pagination" class="pagination" aria-label="Posterior trend pages">
+        <label>Per page <select id="trend-page-size"><option>10</option><option selected>20</option><option>50</option></select></label>
+        <span id="trend-page-info" class="muted" aria-live="polite"></span>
+        <button id="trend-prev" class="ghost" disabled>Previous</button>
+        <button id="trend-next" class="ghost" disabled>Next</button>
+      </nav>
     </section>
 
     <section class="card" id="run-detail" hidden>

@@ -16,6 +16,7 @@ input,select { width:100%; border:1px solid var(--line); border-radius:8px; padd
 select[multiple] { min-height:142px; padding:5px; }
 button { border:0; border-radius:8px; padding:9px 14px; background:var(--blue); color:#fff; cursor:pointer; font:inherit; }
 button:hover { filter:brightness(1.08); }
+button:disabled { cursor:default; opacity:.45; filter:none; }
 button.ghost { color:var(--fg); background:#e9eef5; }
 button.danger { background:#fee2e2; color:var(--red); }
 .schedule-form { display:grid; grid-template-columns:1.2fr 1fr 1fr auto; align-items:end; gap:12px; margin:14px 0 8px; }
@@ -24,6 +25,10 @@ button.danger { background:#fee2e2; color:var(--red); }
 .stat { border:1px solid var(--line); border-radius:9px; padding:9px 12px; background:#f8fafc; }
 .stat b { display:block; font-size:1.2rem; }
 .table-wrap { overflow:auto; }
+.pagination { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:14px; }
+.pagination label { flex-direction:row; align-items:center; }
+.pagination select { width:auto; margin:0; }
+.pagination .muted { margin-right:auto; font-size:.85rem; }
 table { width:100%; border-collapse:collapse; min-width:700px; font-size:.88rem; }
 th,td { padding:10px 8px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
 th { color:var(--muted); font-weight:600; }
