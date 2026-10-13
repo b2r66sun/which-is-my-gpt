@@ -5,8 +5,8 @@
   "description": "Training-cutoff detector with a local Codex evaluation dashboard",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check dashboard.js && node --check scripts/run-codex-eval.mjs",
-    "test": "npm run check && node -e \"const r=require('./app.js').selfTest(); if (!r.every(([, ok]) => ok)) process.exit(1); console.log(r.length + ' self-tests passed')\"",
+    "check": "node --check server.mjs && node --check dashboard.js && node --check scripts/run-codex-eval.mjs && node --check lib/updates.mjs",
+    "test": "npm run check && node -e \"const r=require('./app.js').selfTest(); if (!r.every(([, ok]) => ok)) process.exit(1); console.log(r.length + ' self-tests passed')\" && node --test test/*.test.mjs",
     "pm2:start": "node -e \"require('fs').mkdirSync('.wimgpt',{recursive:true})\" && pm2 startOrRestart ecosystem.config.cjs --only wimgpt-dashboard && pm2 save",
     "pm2:restart": "pm2 restart wimgpt-dashboard --update-env && pm2 save",
     "pm2:stop": "pm2 stop wimgpt-dashboard",

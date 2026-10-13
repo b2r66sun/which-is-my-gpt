@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { createUpdateManager } from "./lib/updates.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -34,6 +36,17 @@ let state = loadState();
 const active = new Map();
 const queue = [];
 let modelCache = { fetchedAt: null, models: [], error: null };
+const updates = createUpdateManager({
+  root: ROOT, stateDir, configPath: options.updatesConfig,
+  isIdle: () => active.size === 0,
+  verifyRestart: async (name) => {
+    try {
+      const { stdout } = await promisify(execFile)("pm2", ["jlist"], { timeout: 10000, maxBuffer: 2_000_000 });
+      return JSON.parse(stdout).some((processInfo) => processInfo.name === name && processInfo.pid === process.pid
+        && processInfo.pm2_env.pm_cwd === ROOT && processInfo.pm2_env.autorestart !== false);
+    } catch { return false; }
+  },
+});
 
 for (const run of state.runs) {
   if (run.status === "running") {
@@ -53,6 +66,7 @@ Options:
   --port PORT          Listen port (default: ${DEFAULT_PORT})
   --state-dir PATH     Persistent state directory (default: ./.wimgpt)
   --codex-bin PATH     Codex executable (default: codex)
+  --updates-config PATH  Optional update .env (default: config/updates/.env)
   --help               Show this help
 `;
 }
@@ -63,6 +77,7 @@ function parseArgs(argv) {
     port: DEFAULT_PORT,
     stateDir: DEFAULT_STATE_DIR,
     codexBin: "codex",
+    updatesConfig: join(ROOT, "config", "updates", ".env"),
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -76,6 +91,7 @@ function parseArgs(argv) {
     else if (arg === "--port") result.port = Number(next);
     else if (arg === "--state-dir") result.stateDir = next;
     else if (arg === "--codex-bin") result.codexBin = next;
+    else if (arg === "--updates-config") result.updatesConfig = resolve(next);
     else throw new Error(`Unknown option: ${arg}\n\n${usage()}`);
     i += 1;
   }
@@ -403,6 +419,48 @@ function publicRun(run) {
   };
 }
 
+function newestFirst(items, timestamp = (item) => item.createdAt) {
+  const time = (item) => Date.parse(timestamp(item)) || 0;
+  return [...items].sort((a, b) => time(b) - time(a));
+}
+
+function positiveInteger(params, key, fallback, maximum = Number.MAX_SAFE_INTEGER) {
+  if (!params.has(key)) return fallback;
+  const raw = params.get(key);
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${key} must be an integer between 1 and ${maximum}`);
+  }
+  return value;
+}
+
+function paginate(items, params, project = (item) => item) {
+  const requestedPage = positiveInteger(params, "page", 1);
+  const pageSize = positiveInteger(params, "pageSize", 20, 100);
+  const total = items.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  return {
+    items: items.slice((page - 1) * pageSize, page * pageSize).map(project),
+    page,
+    pageSize,
+    total,
+    totalPages,
+  };
+}
+
+function runSummary(run) {
+  return {
+    id: run.id,
+    model: run.model,
+    status: run.status,
+    phase: run.phase,
+    createdAt: run.createdAt,
+    finishedAt: run.finishedAt,
+    result: run.result ? { map: run.result.map, entropy: run.result.entropy } : null,
+  };
+}
+
 function findRun(id) {
   return state.runs.find((run) => run.id === id);
 }
@@ -583,7 +641,7 @@ function readUsage(eventsPath) {
 }
 
 function pumpQueue() {
-  if (active.size > 0) return;
+  if (updates.busy || active.size > 0) return;
   while (queue.length) {
     const id = queue.shift();
     const run = findRun(id);
@@ -634,6 +692,7 @@ function tickSchedules() {
 function staticFile(res, pathname) {
   const requested = pathname === "/" || pathname === "/dashboard" ? "dashboard.html" : pathname.slice(1);
   const filePath = resolve(ROOT, requested);
+  if (requested.split(/[\\/]/).some((part) => part.startsWith("."))) return text(res, 403, "Forbidden");
   if (filePath !== ROOT && !filePath.startsWith(`${ROOT}${sep}`)) return text(res, 403, "Forbidden");
   if (!existsSync(filePath)) return text(res, 404, "Not found");
   const content = readFileSync(filePath);
@@ -657,7 +716,19 @@ async function handle(req, res) {
 
   try {
     if (req.method === "GET" && url.pathname === "/api/health") {
-      return json(res, 200, { ok: true, active: active.size, queued: queue.length });
+      return json(res, 200, { ok: true, active: active.size, queued: queue.length, updating: updates.busy });
+    }
+    if (req.method === "GET" && url.pathname === "/api/updates") {
+      return json(res, 200, updates.getStatus());
+    }
+    if (req.method === "POST" && ["/api/updates/check", "/api/updates/apply"].includes(url.pathname)) {
+      if (req.headers.origin && req.headers.origin !== url.origin) return json(res, 403, { error: "Cross-origin update requests are not allowed" });
+      if (!(req.headers["content-type"] || "").startsWith("application/json")) return json(res, 415, { error: "Update requests require application/json" });
+      if (url.pathname.endsWith("/check")) return json(res, 200, await updates.check());
+      const result = await updates.apply();
+      json(res, 202, result);
+      setTimeout(() => shutdown("update"), 500);
+      return;
     }
     if (req.method === "GET" && url.pathname === "/api/config") {
       questionBank = loadQuestionBank();
@@ -714,11 +785,26 @@ async function handle(req, res) {
       return json(res, 200, publicWecomConfig());
     }
     if (req.method === "GET" && url.pathname === "/api/schedules") {
-      return json(res, 200, state.schedules);
+      const schedules = newestFirst(state.schedules);
+      return json(res, 200, url.searchParams.has("page") || url.searchParams.has("pageSize")
+        ? paginate(schedules, url.searchParams)
+        : schedules);
     }
     if (req.method === "GET" && url.pathname === "/api/runs") {
-      const limit = Math.min(Number(url.searchParams.get("limit") || 50), MAX_RUNS);
-      return json(res, 200, state.runs.slice(0, limit).map(publicRun));
+      const runs = newestFirst(state.runs);
+      if (url.searchParams.has("page") || url.searchParams.has("pageSize")) {
+        return json(res, 200, paginate(runs, url.searchParams, runSummary));
+      }
+      const limit = Math.min(positiveInteger(url.searchParams, "limit", 50), MAX_RUNS);
+      return json(res, 200, runs.slice(0, limit).map(publicRun));
+    }
+    if (req.method === "GET" && url.pathname === "/api/runs/trend") {
+      const completed = newestFirst(state.runs.filter((run) => run.result), (run) => run.finishedAt || run.createdAt);
+      if (url.searchParams.has("page") || url.searchParams.has("pageSize")) {
+        return json(res, 200, paginate(completed, url.searchParams, runSummary));
+      }
+      const limit = positiveInteger(url.searchParams, "limit", 20, 100);
+      return json(res, 200, completed.slice(0, limit).map(runSummary));
     }
     if (req.method === "GET" && url.pathname.startsWith("/api/runs/")) {
       const run = findRun(url.pathname.split("/").pop());
@@ -751,7 +837,7 @@ async function handle(req, res) {
         lastTriggeredMinute: null,
         lastTriggeredAt: null,
       };
-      state.schedules.push(schedule);
+      state.schedules.unshift(schedule);
       saveState();
       return json(res, 201, schedule);
     }
@@ -790,7 +876,7 @@ async function handle(req, res) {
     }
     return json(res, 404, { error: "API route not found" });
   } catch (error) {
-    return json(res, 400, { error: error.message });
+    return json(res, error.statusCode || 400, { error: error.message });
   }
 }
 
@@ -800,12 +886,14 @@ const server = createServer((req, res) => {
 server.listen(options.port, options.host, () => {
   console.log(`wimgpt dashboard: http://${options.host}:${options.port}/`);
   console.log(`state directory: ${stateDir}`);
+  updates.start();
 });
-const scheduler = setInterval(tickSchedules, TICK_MS);
+const scheduler = setInterval(() => { tickSchedules(); pumpQueue(); }, TICK_MS);
 scheduler.unref();
 
 function shutdown(signal) {
   clearInterval(scheduler);
+  updates.stop();
   for (const child of active.values()) child.kill("SIGTERM");
   server.close(() => {
     console.log(`stopped (${signal})`);
